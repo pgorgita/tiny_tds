@@ -1,6 +1,7 @@
 #include <tiny_tds_ext.h>
 #include <errno.h>
 
+VALUE TinyTdsInstance;
 VALUE cTinyTdsClient;
 extern VALUE mTinyTds, cTinyTdsError;
 static ID sym_username, sym_password, sym_dataserver, sym_database, sym_appname, sym_tds_version, sym_login_timeout, sym_timeout, sym_encoding, sym_azure, sym_contained, sym_use_utf16;
@@ -41,7 +42,17 @@ VALUE rb_tinytds_raise_error(DBPROCESS *dbproc, int cancel, const char *error, c
     rb_funcall(e, intern_db_error_number_eql, 1, INT2FIX(dberr));
   if (oserr)
     rb_funcall(e, intern_os_error_number_eql, 1, INT2FIX(oserr));
-  rb_exc_raise(e);
+
+  if (severity > 10) {
+    rb_exc_raise(e);
+    return Qnil;
+  }
+
+  if (TinyTdsInstance) {
+    rb_funcall(TinyTdsInstance, rb_intern("forward_message"), 1, e);
+    return Qnil;
+  }
+
   return Qnil;
 }
 
@@ -147,6 +158,8 @@ int tinytds_msg_handler(DBPROCESS *dbproc, DBINT msgno, int msgstate, int severi
     } else {
       rb_tinytds_raise_error(dbproc, 1, msgtext, source, severity, msgno, msgstate);
     }
+  } else {
+    rb_tinytds_raise_error(dbproc, 0, msgtext, source, severity, msgno, msgstate);
   }
   return 0;
 }
@@ -235,6 +248,7 @@ static VALUE rb_tinytds_execute(VALUE self, VALUE sql) {
 
   GET_CLIENT_WRAPPER(self);
   rb_tinytds_client_reset_userdata(cwrap->userdata);
+  rb_iv_set(self, "@latest_result", Qnil);
   REQUIRE_OPEN_CLIENT(cwrap);
   dbcmd(cwrap->client, StringValueCStr(sql));
   if (dbsqlsend(cwrap->client) == FAIL) {
@@ -243,6 +257,7 @@ static VALUE rb_tinytds_execute(VALUE self, VALUE sql) {
   }
   cwrap->userdata->dbsql_sent = 1;
   result = rb_tinytds_new_result_obj(cwrap);
+  rb_iv_set(self, "@latest_result", result);
   rb_iv_set(result, "@query_options", rb_funcall(rb_iv_get(self, "@query_options"), intern_dup, 0));
   {
     GET_RESULT_WRAPPER(result);
@@ -352,6 +367,11 @@ static VALUE rb_tinytds_connect(VALUE self, VALUE opts) {
       rb_warn("TinyTds: :use_utf16 option not supported in this version of FreeTDS.\n");
     }
   #endif
+
+  // we need to set the ruby instance reference before calling dbopen,
+  // so that initial connection messages can be sent to the ruby instance
+  TinyTdsInstance = self;
+
   cwrap->client = dbopen(cwrap->login, StringValueCStr(dataserver));
   if (cwrap->client) {
     VALUE transposed_encoding;

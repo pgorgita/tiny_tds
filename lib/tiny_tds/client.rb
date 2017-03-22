@@ -37,6 +37,10 @@ module TinyTds
       if opts[:dataserver].to_s.empty? && opts[:host].to_s.empty?
         raise ArgumentError, 'missing :host option if no :dataserver given'
       end
+
+      @message_handler = block_given? ? Proc.new : nil
+      @latest_result = nil
+
       opts[:username] = parse_username(opts)
       @query_options = self.class.default_query_options.dup
       opts[:password] = opts[:password].to_s if opts[:password] && opts[:password].to_s.strip != ''
@@ -66,6 +70,10 @@ module TinyTds
       !closed? && !dead?
     end
 
+    def receive_message(&block)
+      @message_handler = block
+    end
+
     private
 
     def parse_username(opts)
@@ -81,6 +89,14 @@ module TinyTds
     def tds_versions_setter(opts = {})
       v = opts[:tds_version] || ENV['TDSVER'] || '7.3'
       TDS_VERSIONS_SETTERS[v.to_s]
+    end
+
+    def forward_message(e)
+      if @latest_result
+        @latest_result.forward_message(e)
+      elsif @message_handler
+        @message_handler.call(e)
+      end
     end
 
     # From sybdb.h comments:

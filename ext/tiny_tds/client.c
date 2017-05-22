@@ -43,16 +43,7 @@ VALUE rb_tinytds_raise_error(DBPROCESS *dbproc, int cancel, const char *error, c
   if (oserr)
     rb_funcall(e, intern_os_error_number_eql, 1, INT2FIX(oserr));
 
-  if (severity > 10) {
-    rb_exc_raise(e);
-    return Qnil;
-  }
-
-  if (TinyTdsInstance) {
-    rb_funcall(TinyTdsInstance, rb_intern("forward_message"), 1, e);
-    return Qnil;
-  }
-
+  rb_exc_raise(e);
   return Qnil;
 }
 
@@ -159,7 +150,15 @@ int tinytds_msg_handler(DBPROCESS *dbproc, DBINT msgno, int msgstate, int severi
       rb_tinytds_raise_error(dbproc, 1, msgtext, source, severity, msgno, msgstate);
     }
   } else {
-    rb_tinytds_raise_error(dbproc, 0, msgtext, source, severity, msgno, msgstate);
+    if (TinyTdsInstance) {
+      VALUE e = rb_exc_new2(cTinyTdsError, msgtext);
+      rb_funcall(e, intern_source_eql, 1, rb_str_new2(source));
+      rb_funcall(e, intern_severity_eql, 1, INT2FIX(severity));
+      rb_funcall(e, intern_db_error_number_eql, 1, INT2FIX(msgno));
+      rb_funcall(e, intern_os_error_number_eql, 1, INT2FIX(msgstate));
+
+      rb_funcall(TinyTdsInstance, rb_intern("forward_message"), 1, e);
+    }
   }
   return 0;
 }
@@ -248,7 +247,6 @@ static VALUE rb_tinytds_execute(VALUE self, VALUE sql) {
 
   GET_CLIENT_WRAPPER(self);
   rb_tinytds_client_reset_userdata(cwrap->userdata);
-  rb_iv_set(self, "@latest_result", Qnil);
   REQUIRE_OPEN_CLIENT(cwrap);
   dbcmd(cwrap->client, StringValueCStr(sql));
   if (dbsqlsend(cwrap->client) == FAIL) {
@@ -257,7 +255,6 @@ static VALUE rb_tinytds_execute(VALUE self, VALUE sql) {
   }
   cwrap->userdata->dbsql_sent = 1;
   result = rb_tinytds_new_result_obj(cwrap);
-  rb_iv_set(self, "@latest_result", result);
   rb_iv_set(result, "@query_options", rb_funcall(rb_iv_get(self, "@query_options"), intern_dup, 0));
   {
     GET_RESULT_WRAPPER(result);

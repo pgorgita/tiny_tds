@@ -38,8 +38,10 @@ module TinyTds
         raise ArgumentError, 'missing :host option if no :dataserver given'
       end
 
-      @message_handler = block_given? ? Proc.new : nil
-      @latest_result = nil
+      @message_handler = opts[:message_handler] || (block_given? ? Proc.new : nil)
+      if @message_handler && !@message_handler.respond_to?(:call)
+        raise ArgumentError, ':message_handler must have a `call` method (eg, a Proc or a Method)'
+      end
 
       opts[:username] = parse_username(opts)
       @query_options = self.class.default_query_options.dup
@@ -70,10 +72,6 @@ module TinyTds
       !closed? && !dead?
     end
 
-    def receive_message(&block)
-      @message_handler = block
-    end
-
     private
 
     def parse_username(opts)
@@ -92,11 +90,7 @@ module TinyTds
     end
 
     def forward_message(e)
-      if @latest_result
-        @latest_result.forward_message(e)
-      elsif @message_handler
-        @message_handler.call(e)
-      end
+      @message_handler.call(e) if @message_handler
     end
 
     # From sybdb.h comments:

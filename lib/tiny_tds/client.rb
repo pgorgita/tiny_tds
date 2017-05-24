@@ -10,6 +10,7 @@ module TinyTds
     }
 
     attr_reader :query_options
+    attr_reader :message_handler
 
     class << self
 
@@ -40,7 +41,7 @@ module TinyTds
 
       @message_handler = opts[:message_handler] || (block_given? ? Proc.new : nil)
       if @message_handler && !@message_handler.respond_to?(:call)
-        raise ArgumentError, ':message_handler must have a `call` method (eg, a Proc or a Method)'
+        raise ArgumentError, ':message_handler must implement `call` (eg, a Proc or a Method)'
       end
 
       opts[:username] = parse_username(opts)
@@ -87,10 +88,6 @@ module TinyTds
     def tds_versions_setter(opts = {})
       v = opts[:tds_version] || ENV['TDSVER'] || '7.3'
       TDS_VERSIONS_SETTERS[v.to_s]
-    end
-
-    def forward_message(e)
-      @message_handler.call(e) if @message_handler
     end
 
     # From sybdb.h comments:

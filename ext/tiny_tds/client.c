@@ -1,13 +1,13 @@
 #include <tiny_tds_ext.h>
 #include <errno.h>
 
-VALUE TinyTdsInstance;
 VALUE cTinyTdsClient;
 extern VALUE mTinyTds, cTinyTdsError;
-static ID sym_username, sym_password, sym_dataserver, sym_database, sym_appname, sym_tds_version, sym_login_timeout, sym_timeout, sym_encoding, sym_azure, sym_contained, sym_use_utf16;
+static ID sym_username, sym_password, sym_dataserver, sym_database, sym_appname, sym_tds_version, sym_login_timeout, sym_timeout, sym_encoding, sym_azure, sym_contained, sym_use_utf16, sym_message_handler;
 static ID intern_source_eql, intern_severity_eql, intern_db_error_number_eql, intern_os_error_number_eql;
-static ID intern_new, intern_dup, intern_transpose_iconv_encoding, intern_local_offset, intern_gsub;
+static ID intern_new, intern_dup, intern_transpose_iconv_encoding, intern_local_offset, intern_gsub, intern_call;
 VALUE opt_escape_regex, opt_escape_dblquote;
+VALUE message_handler;
 
 
 // Lib Macros
@@ -150,14 +150,14 @@ int tinytds_msg_handler(DBPROCESS *dbproc, DBINT msgno, int msgstate, int severi
       rb_tinytds_raise_error(dbproc, 1, msgtext, source, severity, msgno, msgstate);
     }
   } else {
-    if (TinyTdsInstance) {
+    if (message_handler && message_handler != Qnil && rb_respond_to(message_handler, intern_call) != 0) {
       VALUE e = rb_exc_new2(cTinyTdsError, msgtext);
       rb_funcall(e, intern_source_eql, 1, rb_str_new2(source));
       rb_funcall(e, intern_severity_eql, 1, INT2FIX(severity));
       rb_funcall(e, intern_db_error_number_eql, 1, INT2FIX(msgno));
       rb_funcall(e, intern_os_error_number_eql, 1, INT2FIX(msgstate));
 
-      rb_funcall(TinyTdsInstance, rb_intern("forward_message"), 1, e);
+      rb_funcall(message_handler, intern_call, 1, e);
     }
   }
   return 0;
@@ -320,6 +320,7 @@ static VALUE rb_tinytds_connect(VALUE self, VALUE opts) {
   azure = rb_hash_aref(opts, sym_azure);
   contained = rb_hash_aref(opts, sym_contained);
   use_utf16 = rb_hash_aref(opts, sym_use_utf16);
+  message_handler = rb_hash_aref(opts, sym_message_handler);
   /* Dealing with options. */
   if (dbinit() == FAIL) {
     rb_raise(cTinyTdsError, "failed dbinit() function");
@@ -364,10 +365,6 @@ static VALUE rb_tinytds_connect(VALUE self, VALUE opts) {
       rb_warn("TinyTds: :use_utf16 option not supported in this version of FreeTDS.\n");
     }
   #endif
-
-  // we need to set the ruby instance reference before calling dbopen,
-  // so that initial connection messages can be sent to the ruby instance
-  TinyTdsInstance = self;
 
   cwrap->client = dbopen(cwrap->login, StringValueCStr(dataserver));
   if (cwrap->client) {
@@ -427,6 +424,7 @@ void init_tinytds_client() {
   sym_azure = ID2SYM(rb_intern("azure"));
   sym_contained = ID2SYM(rb_intern("contained"));
   sym_use_utf16 = ID2SYM(rb_intern("use_utf16"));
+  sym_message_handler = ID2SYM(rb_intern("message_handler"));
   /* Intern TinyTds::Error Accessors */
   intern_source_eql = rb_intern("source=");
   intern_severity_eql = rb_intern("severity=");
@@ -438,6 +436,7 @@ void init_tinytds_client() {
   intern_transpose_iconv_encoding = rb_intern("transpose_iconv_encoding");
   intern_local_offset = rb_intern("local_offset");
   intern_gsub = rb_intern("gsub");
+  intern_call = rb_intern("call");
   /* Escape Regexp Global */
   opt_escape_regex = rb_funcall(rb_cRegexp, intern_new, 1, rb_str_new2("\\\'"));
   opt_escape_dblquote = rb_str_new2("''");

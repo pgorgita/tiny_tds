@@ -25,7 +25,7 @@ VALUE message_handler;
 
 // Lib Backend (Helpers)
 
-VALUE rb_tinytds_raise_error(DBPROCESS *dbproc, int cancel, const char *error, const char *source, int severity, int dberr, int oserr) {
+VALUE rb_tinytds_raise_error(DBPROCESS *dbproc, int is_message, int cancel, const char *error, const char *source, int severity, int dberr, int oserr) {
   VALUE e;
   GET_CLIENT_USERDATA(dbproc);
   if (cancel && !dbdead(dbproc) && userdata && !userdata->closed) {
@@ -42,6 +42,14 @@ VALUE rb_tinytds_raise_error(DBPROCESS *dbproc, int cancel, const char *error, c
     rb_funcall(e, intern_db_error_number_eql, 1, INT2FIX(dberr));
   if (oserr)
     rb_funcall(e, intern_os_error_number_eql, 1, INT2FIX(oserr));
+
+  if (severity <= 10 && is_message) {
+    if (message_handler && message_handler != Qnil && rb_respond_to(message_handler, intern_call) != 0) {
+      rb_funcall(message_handler, intern_call, 1, e);
+    }
+
+    return Qnil;
+  }
 
   rb_exc_raise(e);
   return Qnil;
@@ -111,6 +119,7 @@ int tinytds_err_handler(DBPROCESS *dbproc, int severity, int dberr, int oserr, c
     generic message can be sent.
     */
     if (!userdata->nonblocking_error.is_set) {
+      userdata->nonblocking_error.is_message = 0;
       userdata->nonblocking_error.cancel = cancel;
       strncpy(userdata->nonblocking_error.error, dberrstr, ERROR_MSG_SIZE);
       strncpy(userdata->nonblocking_error.source, source, ERROR_MSG_SIZE);
@@ -121,7 +130,7 @@ int tinytds_err_handler(DBPROCESS *dbproc, int severity, int dberr, int oserr, c
     }
 
   } else {
-    rb_tinytds_raise_error(dbproc, cancel, dberrstr, source, severity, dberr, oserr);
+    rb_tinytds_raise_error(dbproc, 0, cancel, dberrstr, source, severity, dberr, oserr);
   }
 
   return return_value;
@@ -130,35 +139,28 @@ int tinytds_err_handler(DBPROCESS *dbproc, int severity, int dberr, int oserr, c
 int tinytds_msg_handler(DBPROCESS *dbproc, DBINT msgno, int msgstate, int severity, char *msgtext, char *srvname, char *procname, int line) {
   static const char *source = "message";
   GET_CLIENT_USERDATA(dbproc);
-  if (severity > 10) {
-    // See tinytds_err_handler() for info about why we do this
-    if (userdata && userdata->nonblocking) {
-      if (!userdata->nonblocking_error.is_set) {
-        userdata->nonblocking_error.cancel = 1;
-        strncpy(userdata->nonblocking_error.error, msgtext, ERROR_MSG_SIZE);
-        strncpy(userdata->nonblocking_error.source, source, ERROR_MSG_SIZE);
-        userdata->nonblocking_error.severity = severity;
-        userdata->nonblocking_error.dberr = msgno;
-        userdata->nonblocking_error.oserr = msgstate;
-        userdata->nonblocking_error.is_set = 1;
-      }
-      if (!dbdead(dbproc) && !userdata->closed) {
-        dbcancel(dbproc);
-        userdata->dbcancel_sent = 1;
-      }
-    } else {
-      rb_tinytds_raise_error(dbproc, 1, msgtext, source, severity, msgno, msgstate);
+
+  int is_message_an_error = severity > 10 ? 1 : 0;
+
+  // See tinytds_err_handler() for info about why we do this
+  if (userdata && userdata->nonblocking) {
+    if (!userdata->nonblocking_error.is_set) {
+      userdata->nonblocking_error.is_message = !is_message_an_error;
+      userdata->nonblocking_error.cancel = is_message_an_error;
+      strncpy(userdata->nonblocking_error.error, msgtext, ERROR_MSG_SIZE);
+      strncpy(userdata->nonblocking_error.source, source, ERROR_MSG_SIZE);
+      userdata->nonblocking_error.severity = severity;
+      userdata->nonblocking_error.dberr = msgno;
+      userdata->nonblocking_error.oserr = msgstate;
+      userdata->nonblocking_error.is_set = 1;
+    }
+
+    if (is_message_an_error && !dbdead(dbproc) && !userdata->closed) {
+      dbcancel(dbproc);
+      userdata->dbcancel_sent = 1;
     }
   } else {
-    if (message_handler && message_handler != Qnil && rb_respond_to(message_handler, intern_call) != 0) {
-      VALUE e = rb_exc_new2(cTinyTdsError, msgtext);
-      rb_funcall(e, intern_source_eql, 1, rb_str_new2(source));
-      rb_funcall(e, intern_severity_eql, 1, INT2FIX(severity));
-      rb_funcall(e, intern_db_error_number_eql, 1, INT2FIX(msgno));
-      rb_funcall(e, intern_os_error_number_eql, 1, INT2FIX(msgstate));
-
-      rb_funcall(message_handler, intern_call, 1, e);
-    }
+    rb_tinytds_raise_error(dbproc, !is_message_an_error, is_message_an_error, msgtext, source, severity, msgno, msgstate);
   }
   return 0;
 }

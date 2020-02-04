@@ -51,5 +51,7 @@ environment:
     - ruby_version: "25"
     - ruby_version: "26-x64"
     - ruby_version: "26"
+    - ruby_version: "27-x64"
+    - ruby_version: "27"
 on_failure:
   - find -name compile.log | xargs cat

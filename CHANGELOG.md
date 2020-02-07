@@ -3,6 +3,9 @@
 * Removed old/unused appveyor config
 * Remove old Rubies from CI & cross compile list
 * Add Ruby 2.6 to the cross compile list
+* Add Ruby 2.7 to CI & cross compile list
+* Upgrade to rake-compiler-dock 1.0 (for Ruby 2.7 support)
+* Upgrade to OpenSSL 1.1.1d
 
 ## 2.1.2
 
